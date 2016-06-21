@@ -51,23 +51,35 @@ class TreeherderJobFactory(object):
         self.submitter = submitter
         self.state = None
 
-    def create_job(self, repository, revision, add_platform_info=True, **kwargs):
+    def create_job(self, repository, revision, add_platform_info=True,
+                   **kwargs):
         ''' This creates a Treeherder job which won't be scheduled.
 
         Times of the job won't be established here but upon submission.
         The state of the job not established in here.
 
-        XXX: change this code to change anything that is not mandatory as optional
+        XXX: change this code to change anything that is not mandatory as
+             optional.
         '''
         job = TreeherderJob()
 
         if add_platform_info:
-            # This information is used to determine under which platform to place your
-            # job on the UI
-            platform = self._get_treeherder_platform()
+            # The middle value in the tuple is mapped using this:
+            # https://github.com/mozilla/treeherder/blob/master/ui/js/values.js
+            if kwargs.get('platform_info'):
+                platform_info = kwargs.get('platform_info')
+                # e.g. ('linux', 'linux64', 'x86_64')
+                assert type(platform_info) == tuple and len(platform_info) == 3
+                platform = platform_info
+            else:
+                # This information is used to determine under which platform to
+                # place your job on the UI
+                platform = self._get_treeherder_platform()
+
             job.add_build_info(*platform)
             job.add_machine_info(*platform)
-            job.add_machine(kwargs.get('machine', socket.getfqdn()))
+
+        job.add_machine(kwargs.get('machine', socket.getfqdn()))
 
         # If no group_name and group_symbol are specified we default unknown/?
         # which will make the job not to belong to any group
