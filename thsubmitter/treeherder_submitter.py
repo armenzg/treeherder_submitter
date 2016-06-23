@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -10,24 +8,22 @@
 
 # Standard libraries
 import datetime
+import logging
 import json
-import os
 import pprint
 import socket
 import time
 import uuid
 
-from urlparse import urljoin, urlparse
+from urlparse import urljoin
 
 # Third party modules
 from thclient import TreeherderClient, TreeherderJob, TreeherderJobCollection
 from mozinfo import info as pf_info
 
-here = os.path.dirname(os.path.abspath(__file__))
-
+LOG = logging.getLogger(__name__)
 RESULTSET_FRAGMENT = 'api/project/{repository}/resultset/?revision={revision}'
 JOB_FRAGMENT = '/#/jobs?repo={repository}&revision={revision}'
-
 OPTION_COLLECTION_VALUES = ['opt', 'debug']  # XXX: add missing valid values
 
 
@@ -44,6 +40,14 @@ class JobState(object):
     PENDING = 'pending'
     RUNNING = 'running'
     VALID_STATES = (COMPLETED, PENDING, RUNNING)
+
+
+class JobEndResult(object):
+    SUCCESS = 'success'
+    FAIL = 'busted'
+    EXCEPTION = 'exception'
+    CANCELED = 'usercancel'
+    VALID_RESULTS = (SUCCESS, FAIL, EXCEPTION, CANCELED)
 
 
 class TreeherderJobFactory(object):
@@ -124,7 +128,7 @@ class TreeherderJobFactory(object):
         # Bug 1175559 - Workaround for HTTP Error
 
         job.add_end_timestamp(0)
-        self.submitter._submit(job=job, state=self.state)
+        self.submitter._submit(job=job, state=self.state, **kwargs)
 
     def submit_completed(self, job, result, **kwargs):
         if not self.state or self.state == JobState.RUNNING:
@@ -166,17 +170,18 @@ class TreeherderJobFactory(object):
 class TreeherderSubmitter(object):
     ''' This class helps you submit jobs to a specific repository and revision.'''
 
-    def __init__(self, treeherder_url=None, treeherder_client_id=None,
-                 treeherder_secret=None, **kwargs):
-        url = urlparse(treeherder_url)
-        self.url = treeherder_url
+    def __init__(self, host, protocol='http', treeherder_client_id=None,
+                 treeherder_secret=None, dry_run=False, **kwargs):
+        self.url = '{}://{}'.format(protocol, host)
 
         if not treeherder_client_id or not treeherder_secret:
             raise ValueError('The client_id and secret for Treeherder must be set.')
 
+        self.dry_run = dry_run
+
         self.client = TreeherderClient(
-            protocol=url.scheme,
-            host=url.hostname,
+            protocol=protocol,
+            host=host,
             client_id=treeherder_client_id,
             secret=treeherder_secret
         )
@@ -190,32 +195,56 @@ class TreeherderSubmitter(object):
                 job=job,
                 result=kwargs['result'],
                 endtime=kwargs.get('endtime', timestamp_now()),
-                job_info=kwargs.get('job_info', []),
-                artifacts=kwargs.get('artifacts', [])
+                artifacts=kwargs.get('artifacts', []),
+                log_references=kwargs['log_references'],
+                job_info_details_panel=kwargs.get('job_info_details_panel', []),
             )
 
         job_collection = TreeherderJobCollection()
         job_collection.add(job)
-        print('Sending results to Treeherder:')
+        LOG.info('Intending to send this to Treeherder:')
         pprint.pprint(json.loads(job_collection.to_json()))
 
-        self.client.post_collection(job.data['project'], job_collection)
+        if self.dry_run:
+            LOG.info('Dry run; we did not submit any jobs')
+        else:
+            self.client.post_collection(job.data['project'], job_collection)
 
-        print('Results are available to view at: {}'.format(
-            urljoin(self.url, JOB_FRAGMENT.format(
-                repository=job.data['project'],
-                revision=job.data['revision']))))
+            LOG.info('Results are available to view at: {}'.format(
+                urljoin(self.url, JOB_FRAGMENT.format(
+                    repository=job.data['project'],
+                    revision=job.data['revision']))))
 
-    def _process_completed_request(self, job, result, endtime, job_info=[], artifacts=[]):
+    def _process_completed_request(self, job, result, endtime, log_references, artifacts=[],
+                                   job_info_details_panel=[]):
         """Update the status of a job to completed.
         """
+        assert result in JobEndResult.VALID_RESULTS
+
         job.add_result(result)
         job.add_end_timestamp(endtime)
 
+        for log in log_references:
+            # It expects 'url', 'name' and optionally 'parse_status'
+            #
+            # If 'parse_status' is 'pending' then Treeherder will not turn the "log viewer" button
+            # into a hyperlink, however, you can still use the "raw log" button beside it
+            # The 'Failure summary' will show this message:
+            #   Log parsing in progress. The raw log is available. This panel will
+            #   automatically recheck every 5 seconds.
+            #
+            # XXX: Determine valid values for 'name'
+            # XXX: Should I fail if 'buildbot_text'? 'buildbot_text' requires uploading
+            #      a 'text_log_artifact' IIUC
+            # https://github.com/mozilla/treeherder/blob/master/treeherder/model/derived/jobs.py#L1604
+            job.add_log_reference(**log)
+
         # We can only submit job info once, so it has to be done when the job completes
-        if job_info:
+        if job_info_details_panel:
+            # 1) Generate list with data structure
             job_details = []
-            for detail in job_info:
+            for detail in job_info_details_panel:
+                # XXX: We should verify the content_type values
                 job_details.append({
                     'content_type': detail['content_type'],
                     'title': detail['title'],
@@ -223,6 +252,7 @@ class TreeherderSubmitter(object):
                     'value': detail['value'],
                 })
 
+            # 2) Append the special "Job Info" artifact
             # This will show on TH's UI as 'Job details' pane
             artifacts.append({
                 'blob': {'job_details': job_details},
@@ -231,7 +261,11 @@ class TreeherderSubmitter(object):
             })
 
         # Add all uploaded artifacts
-        print("Adding artifacts")
+        if artifacts:
+            LOG.info("Adding artifacts")
+
+        # I think artifacts are stored in the backed without showing up in the UI
+        # If you want the artifact to show up, mention it on job_info_details_panel
         for a in artifacts:
             job.add_artifact(
                 name=a['name'],

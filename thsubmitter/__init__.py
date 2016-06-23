@@ -1,1 +1,1 @@
-from .treeherder_submitter import *
+from .treeherder_submitter import *  # flake8: noqa

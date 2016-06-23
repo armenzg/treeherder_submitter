@@ -6,7 +6,7 @@ required = [
 
 setup(
     name='treeherder-submitter',
-    version='0.0.1.dev0',
+    version='0.1.0',
     packages=find_packages(),
     install_requires=required,
     tests_require=required,
