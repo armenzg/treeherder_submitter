@@ -180,7 +180,8 @@ class TreeherderSubmitter(object):
         self.dry_run = dry_run
 
         self.client = TreeherderClient(
-            server_url=self.url,
+            host=host,
+            protocol=protocol,
             client_id=treeherder_client_id,
             secret=treeherder_secret
         )
