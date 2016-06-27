@@ -174,14 +174,13 @@ class TreeherderSubmitter(object):
                  treeherder_secret=None, dry_run=False, **kwargs):
         self.url = '{}://{}'.format(protocol, host)
 
-        if not treeherder_client_id or not treeherder_secret:
+        if not dry_run and (not treeherder_client_id or not treeherder_secret):
             raise ValueError('The client_id and secret for Treeherder must be set.')
 
         self.dry_run = dry_run
 
         self.client = TreeherderClient(
-            protocol=protocol,
-            host=host,
+            server_url=self.url,
             client_id=treeherder_client_id,
             secret=treeherder_secret
         )
@@ -202,8 +201,7 @@ class TreeherderSubmitter(object):
 
         job_collection = TreeherderJobCollection()
         job_collection.add(job)
-        LOG.info('Intending to send this to Treeherder:')
-        pprint.pprint(json.loads(job_collection.to_json()))
+        LOG.debug(str(json.dumps(job_collection.to_json())))
 
         if self.dry_run:
             LOG.info('Dry run; we did not submit any jobs')
@@ -259,10 +257,6 @@ class TreeherderSubmitter(object):
                 'name': 'Job Info',
                 'type': 'json',
             })
-
-        # Add all uploaded artifacts
-        if artifacts:
-            LOG.info("Adding artifacts")
 
         # I think artifacts are stored in the backed without showing up in the UI
         # If you want the artifact to show up, mention it on job_info_details_panel
