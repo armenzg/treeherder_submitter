@@ -53,7 +53,6 @@ class JobEndResult(object):
 class TreeherderJobFactory(object):
     def __init__(self, submitter):
         self.submitter = submitter
-        self.state = None
 
     def create_job(self, repository, revision, add_platform_info=True,
                    **kwargs):
@@ -102,10 +101,14 @@ class TreeherderJobFactory(object):
         return job
 
     def submit_pending(self, job, **kwargs):
-        if not self.state:
-            self.state = JobState.PENDING
+        state = job.data['job']['state']
+        if state == '':
+            state = JobState.PENDING
         else:
-            raise TreeherderSubmitterError("You can't submit a job with state as as pending.")
+            raise TreeherderSubmitterError(
+                "You tried to submit this job as pending, however, it already "
+                "has a state of {}".format(state)
+            )
 
         # submit and start times can be the same
         job.add_submit_timestamp(kwargs.get('submit_time', timestamp_now()))
@@ -113,14 +116,18 @@ class TreeherderJobFactory(object):
         # Bug 1175559 - Workaround for HTTP Error
         job.add_end_timestamp(0)
 
-        self.submitter._submit(job=job, state=self.state)
+        self.submitter._submit(job=job, state=state)
 
     def submit_running(self, job, **kwargs):
-        if not self.state or self.state == JobState.PENDING:
+        state = job.data['job']['state']
+        if state == '' or state == JobState.PENDING:
             # We don't need to be on a pending state before going straight to running
-            self.state = JobState.RUNNING
+            state = JobState.RUNNING
         else:
-            raise TreeherderSubmitterError("You can't submit a job with state as as pending.")
+            raise TreeherderSubmitterError(
+                "You tried to submit this job as running, however, it already "
+                "has a state of {}".format(state)
+            )
 
         # submit time and start time can be the same
         job.add_submit_timestamp(kwargs.get('submit_time', timestamp_now()))
@@ -128,18 +135,22 @@ class TreeherderJobFactory(object):
         # Bug 1175559 - Workaround for HTTP Error
 
         job.add_end_timestamp(0)
-        self.submitter._submit(job=job, state=self.state, **kwargs)
+        self.submitter._submit(job=job, state=state, **kwargs)
 
     def submit_completed(self, job, result, **kwargs):
-        if not self.state or self.state == JobState.RUNNING:
-            # We don't need to be on a pending state before going straight to running
-            self.state = JobState.COMPLETED
+        state = job.data['job']['state']
+        if state == '' or state == JobState.RUNNING:
+            # We don't need to be on a pending state before going straight to completed
+            state = JobState.COMPLETED
         else:
-            raise TreeherderSubmitterError("You can't submit a job with state as as pending.")
+            raise TreeherderSubmitterError(
+                "You tried to submit this job as completed, however, it already "
+                "has a state of {}".format(state)
+            )
 
         job.add_end_timestamp(kwargs.get('end_time', timestamp_now()))
 
-        self.submitter._submit(job=job, state=self.state, result=result, **kwargs)
+        self.submitter._submit(job=job, state=state, result=result, **kwargs)
 
     def _option_collection(self, option_collection):
         assert option_collection in OPTION_COLLECTION_VALUES
@@ -209,7 +220,7 @@ class TreeherderSubmitter(object):
         else:
             self.client.post_collection(job.data['project'], job_collection)
 
-            LOG.info('Results are available to view at: {}'.format(
+            LOG.debug('Results are available to view at: {}'.format(
                 urljoin(self.url, JOB_FRAGMENT.format(
                     repository=job.data['project'],
                     revision=job.data['revision']))))
