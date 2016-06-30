@@ -82,7 +82,10 @@ class TreeherderJobFactory(object):
             job.add_build_info(*platform)
             job.add_machine_info(*platform)
 
-        job.add_machine(kwargs.get('machine', socket.getfqdn()))
+        # https://bugzilla.mozilla.org/show_bug.cgi?id=1283510
+        # Treeherder currently limits the machine name to 50 characters
+        # Work around it until fixed
+        job.add_machine(kwargs.get('machine', socket.getfqdn()[:50]))
 
         # If no group_name and group_symbol are specified we default unknown/?
         # which will make the job not to belong to any group
