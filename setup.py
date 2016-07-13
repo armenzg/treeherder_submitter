@@ -1,12 +1,13 @@
 from setuptools import setup, find_packages
 
 required = [
+    "mozinfo",
     "treeherder-client",
 ]
 
 setup(
     name='treeherder-submitter',
-    version='0.4.0',
+    version='0.4.1',
     packages=find_packages(),
     install_requires=required,
     tests_require=required,
