@@ -10,7 +10,6 @@
 import datetime
 import logging
 import json
-import pprint
 import socket
 import time
 import uuid
@@ -24,7 +23,8 @@ from mozinfo import info as pf_info
 LOG = logging.getLogger(__name__)
 RESULTSET_FRAGMENT = 'api/project/{repository}/resultset/?revision={revision}'
 JOB_FRAGMENT = '/#/jobs?repo={repository}&revision={revision}'
-OPTION_COLLECTION_VALUES = ['opt', 'debug']  # XXX: add missing valid values
+# XXX: we should import this values through the th client
+OPTION_COLLECTION_VALUES = ['opt', 'debug']
 
 
 def timestamp_now():
@@ -35,6 +35,7 @@ class TreeherderSubmitterError(Exception):
     pass
 
 
+# XXX: These values should be imported through the th client
 class JobState(object):
     COMPLETED = 'completed'
     PENDING = 'pending'
@@ -42,12 +43,16 @@ class JobState(object):
     VALID_STATES = (COMPLETED, PENDING, RUNNING)
 
 
+# XXX: These values should be imported through the th client
 class JobEndResult(object):
+    '''This determines the colour of the job.'''
+    # https://github.com/mozilla/treeherder/blob/master/schemas/pulse-job.yml#L176
     SUCCESS = 'success'
-    FAIL = 'busted'
+    FAIL = 'fail'
     EXCEPTION = 'exception'
-    CANCELED = 'usercancel'
-    VALID_RESULTS = (SUCCESS, FAIL, EXCEPTION, CANCELED)
+    CANCELED = 'canceled'
+    UNKNOWN = 'unknown'  # When the job has not yet completed
+    VALID_RESULTS = (SUCCESS, FAIL, EXCEPTION, CANCELED, UNKNOWN)
 
 
 class TreeherderJobFactory(object):
@@ -72,7 +77,9 @@ class TreeherderJobFactory(object):
             if kwargs.get('platform_info'):
                 platform_info = kwargs.get('platform_info')
                 # e.g. ('linux', 'linux64', 'x86_64')
-                assert type(platform_info) == tuple and len(platform_info) == 3
+                assert type(platform_info) == tuple and len(platform_info) == 3, \
+                    'The data does not meet our expectations. platform_info: {}'.format(platform_info)
+
                 platform = platform_info
             else:
                 # This information is used to determine under which platform to
@@ -156,7 +163,8 @@ class TreeherderJobFactory(object):
         self.submitter._submit(job=job, state=state, result=result, **kwargs)
 
     def _option_collection(self, option_collection):
-        assert option_collection in OPTION_COLLECTION_VALUES
+        assert option_collection in OPTION_COLLECTION_VALUES, \
+            'option_collection: "{}" was not found in {}'.format(option_collection, OPTION_COLLECTION_VALUES)
         # XXX: finish this up
         if option_collection == 'opt':
             return {'opt': True}
@@ -184,9 +192,14 @@ class TreeherderJobFactory(object):
 class TreeherderSubmitter(object):
     ''' This class helps you submit jobs to a specific repository and revision.'''
 
-    def __init__(self, host, protocol='http', treeherder_client_id=None,
+    def __init__(self, server_url, host=None, protocol='http', treeherder_client_id=None,
                  treeherder_secret=None, dry_run=False, **kwargs):
-        self.url = '{}://{}'.format(protocol, host)
+
+        if 'host' in kwargs and 'protocol' in kwargs:
+            LOG.warning('Use server_url as host and protocol are deprecated')
+            self.server_url = '{}://{}'.format(protocol, host)
+        else:
+            self.server_url = server_url
 
         if not dry_run and (not treeherder_client_id or not treeherder_secret):
             raise ValueError('The client_id and secret for Treeherder must be set.')
@@ -194,14 +207,15 @@ class TreeherderSubmitter(object):
         self.dry_run = dry_run
 
         self.client = TreeherderClient(
-            host=host,
+            server_url=self.server_url,
             protocol=protocol,
             client_id=treeherder_client_id,
             secret=treeherder_secret
         )
 
     def _submit(self, job, state, **kwargs):
-        assert state in JobState.VALID_STATES
+        assert state in JobState.VALID_STATES, \
+            'state: "{}" was not found in {}'.format(state, JobState.VALID_STATES)
         job.add_state(state)
 
         if state == JobState.COMPLETED:
@@ -224,7 +238,7 @@ class TreeherderSubmitter(object):
             self.client.post_collection(job.data['project'], job_collection)
 
             LOG.debug('Results are available to view at: {}'.format(
-                urljoin(self.url, JOB_FRAGMENT.format(
+                urljoin(self.server_url, JOB_FRAGMENT.format(
                     repository=job.data['project'],
                     revision=job.data['revision']))))
 
@@ -232,7 +246,8 @@ class TreeherderSubmitter(object):
                                    job_info_details_panel=[]):
         """Update the status of a job to completed.
         """
-        assert result in JobEndResult.VALID_RESULTS
+        assert result in JobEndResult.VALID_RESULTS, \
+            'result: "{}" was not found in {}'.format(result, JobEndResult.VALID_RESULTS)
 
         job.add_result(result)
         job.add_end_timestamp(endtime)

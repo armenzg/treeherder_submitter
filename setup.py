@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 required = [
-    "treeherder-client==2.1.0",
+    "treeherder-client",
 ]
 
 setup(
     name='treeherder-submitter',
-    version='0.3.0',
+    version='0.4.0',
     packages=find_packages(),
     install_requires=required,
     tests_require=required,
